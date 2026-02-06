@@ -19,4 +19,14 @@ module.exports.policies = {
 
   // '*': true,
 
+  // Auth is public
+  'auth/*': true,
+
+  // User Controller Policies
+  'user/create': ['isAuthenticated', 'isAdmin'], // Admin only
+  'user/get-all': ['isAuthenticated', 'isAdmin'], // Admin only
+  'user/get-one': 'isAuthenticated',
+  'user/update': 'isAuthenticated',
+  'user/delete': 'isAuthenticated',
+
 };
