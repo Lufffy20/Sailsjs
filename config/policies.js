@@ -22,6 +22,12 @@ module.exports.policies = {
   // Auth is public
   'auth/*': true,
 
+  // Rate limit only reset request
+  'auth/request-password-reset': ['rate-limit-password-reset'],
+
+  // Reset password remains public (token-based)
+  'auth/reset-password': true,
+
   // User Controller Policies
   'user/create': ['isAuthenticated', 'isAdmin'], // Admin only
   'user/get-all': ['isAuthenticated', 'isAdmin'], // Admin only

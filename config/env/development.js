@@ -4,7 +4,7 @@ module.exports.datastores = {
     adapter: 'sails-mysql',
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
+    password: process.env.DB_PASSWORD || '1',
     database: process.env.DB_NAME || 'sails1',
     port: process.env.DB_PORT || 3306,
     pool: {
