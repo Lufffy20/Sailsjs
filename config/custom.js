@@ -19,4 +19,17 @@ module.exports.custom = {
   // stripeSecret: 'sk_test_Zzd814nldl91104qor5911gjald',
   // …
 
+  baseUrl: 'http://localhost:1337',
+
+  email: {
+    // Mailtrap settings
+    host: 'sandbox.smtp.mailtrap.io',
+    port: 2525,
+    auth: {
+      user: 'e2dacce345cc6b',
+      pass: '2bc8945bfef978'
+    },
+    from: 'no-reply@example.com'
+  }
+
 };
