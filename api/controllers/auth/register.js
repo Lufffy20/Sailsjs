@@ -1,6 +1,23 @@
 /**
  * Register Action
- * Handles new user registration
+ *
+ * Purpose:
+ * Handles new user registration process.
+ * - Validates password and confirm password
+ * - Checks for duplicate email and username
+ * - Creates a new user with unverified email status
+ * - Generates an email verification token
+ * - Sends verification email to the user
+ *
+ * Flow:
+ * 1. Validate password and confirm password
+ * 2. Check if email already exists
+ * 3. Check if username already exists
+ * 4. Generate unique email verification token
+ * 5. Create user with unverified email status
+ * 6. Generate email verification link
+ * 7. Send verification email
+ * 8. Return success response
  */
 
 module.exports = {
@@ -15,33 +32,28 @@ module.exports = {
       required: true,
       description: 'User first name'
     },
-
     lastName: {
       type: 'string',
       required: true,
       description: 'User last name'
     },
-
     username: {
       type: 'string',
       required: true,
       description: 'Unique username'
     },
-
     email: {
       type: 'string',
       required: true,
       isEmail: true,
-      description: 'Valid email address'
+      description: 'User email address'
     },
-
     password: {
       type: 'string',
       required: true,
       minLength: 6,
-      description: 'User password'
+      description: 'Account password'
     },
-
     confirmPassword: {
       type: 'string',
       required: true,
@@ -49,14 +61,14 @@ module.exports = {
     }
   },
 
-  // Possible exits
+  // Possible exit responses
   exits: {
     success: {
       description: 'User registered successfully'
     },
-
     badRequest: {
-      description: 'Invalid input or request'
+      description: 'Invalid input or duplicate data',
+      responseType: 'badRequest'
     }
   },
 
@@ -70,60 +82,59 @@ module.exports = {
       });
     }
 
-    // Destructure required fields
-    const {
-      firstName,
-      lastName,
-      username,
-      email,
-      password
-    } = inputs;
-
     try {
-      // Generate verification token
-      const { v4: uuidv4 } = require('uuid');
-      const verificationToken = uuidv4();
 
-      // Create new user record with unverified status
-      const user = await User.create({
-        firstName,
-        lastName,
-        username,
-        email,
-        password,
-        verificationToken,
-        emailStatus: 'unverified'
-      }).fetch();
-
-      // Send verification email
-      const verifyLink = `${sails.config.custom.baseUrl}/auth/verify-email?token=${verificationToken}`;
-
-      await sails.helpers.sendEmail.with({
-        to: email,
-        subject: 'Verify your email address',
-        text: `Welcome! Please verify your email by clicking the following link: ${verifyLink}`,
-        html: `<p>Welcome!</p><p>Please verify your email by clicking the following link:</p><a href="${verifyLink}">${verifyLink}</a>`
-      });
-
-      // Remove sensitive fields before response
-      const safeUser = _.omit(user, ['password', 'verificationToken']);
-
-      // Send success response
-      return exits.success({
-        message: 'User registered successfully. Please check your email to verify your account.',
-        user: safeUser
-      });
-
-    } catch (err) {
-
-      // Handle duplicate email or username error
-      if (err.code === 'E_UNIQUE') {
+      // Check if email is already registered
+      const emailExists = await User.findOne({ email: inputs.email });
+      if (emailExists) {
         return exits.badRequest({
-          message: 'Account with this email or username already exists'
+          message: 'This email is already in use'
         });
       }
 
-      // Throw unexpected errors
+      // Check if username is already taken
+      const usernameExists = await User.findOne({ username: inputs.username });
+      if (usernameExists) {
+        return exits.badRequest({
+          message: 'This username is already taken'
+        });
+      }
+
+      // Generate email verification token
+      const { v4: uuidv4 } = require('uuid');
+      const verificationToken = uuidv4();
+
+      // Create new user with unverified email status
+      await User.create({
+        firstName: inputs.firstName,
+        lastName: inputs.lastName,
+        username: inputs.username,
+        email: inputs.email,
+        password: inputs.password,
+        verificationToken,
+        emailStatus: 'unverified'
+      });
+
+      // Generate email verification link
+      const verifyLink = `${sails.config.custom.baseUrl}/auth/verify-email?token=${verificationToken}`;
+
+      // Send verification email
+      await sails.helpers.sendEmail.with({
+        to: inputs.email,
+        subject: 'Verify your email address',
+        text: `Please verify your email by clicking this link: ${verifyLink}`,
+        html: `
+          <p>Please verify your email by clicking the link below:</p>
+          <a href="${verifyLink}">${verifyLink}</a>
+        `
+      });
+
+      // Return success response
+      return exits.success({
+        message: 'User registered successfully. Please check your email to verify your account.'
+      });
+
+    } catch (err) {
       throw err;
     }
   }

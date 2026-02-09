@@ -1,23 +1,39 @@
 /**
  * Verify Email Action
- * Handles email verification using token
+ *
+ * Purpose:
+ * Verifies a user's email address using a verification token.
+ * - Validates verification token
+ * - Marks email as verified
+ * - Handles pending email update if present
+ * - Clears verification token after successful verification
+ *
+ * Flow:
+ * 1. Accept verification token
+ * 2. Find user with matching token
+ * 3. If token is invalid or expired, return error
+ * 4. Update email verification status
+ * 5. Update pending email if applicable
+ * 6. Clear verification token
+ * 7. Return success response
  */
+
 module.exports = {
 
-    // Action name used internally by Sails
+    // Action name (used internally by Sails)
     friendlyName: 'Verify Email',
 
-    // Brief description of what this action does
-    description: 'Verify user email address using a token.',
+    // Short description of the action
+    description: 'Verify user email address using a token',
 
     // Expected input parameters
     inputs: {
 
-        // Email verification token received from email link
+        // Email verification token from email link
         token: {
             type: 'string',
             required: true,
-            description: 'The verification token.'
+            description: 'Email verification token'
         }
     },
 
@@ -26,41 +42,51 @@ module.exports = {
 
         // Successful email verification
         success: {
-            description: 'Email verified successfully.'
+            description: 'Email verified successfully'
         },
 
-        // Token is invalid or expired
+        // Invalid or expired token
         invalidToken: {
-            description: 'The provided token is invalid or expired.'
+            description: 'Verification token is invalid or expired',
+            responseType: 'badRequest'
         },
 
-        // Generic server error response
+        // Generic server error
         serverError: {
-            description: 'Something went wrong.'
+            description: 'Unexpected server error'
         }
     },
 
-    // Main action logic
+    // Main logic
     fn: async function (inputs, exits) {
         try {
 
-            // Find user with the provided verification token
+            // Find user using verification token
             const user = await User.findOne({ verificationToken: inputs.token });
 
-            // Return error if no matching user is found
+            // If token is invalid or expired
             if (!user) {
                 return exits.invalidToken({
                     message: 'Invalid or expired verification token.'
                 });
             }
 
-            // Mark email as verified and clear verification token
-            await User.updateOne({ id: user.id }).set({
+            // Prepare fields to update
+            const updates = {
                 emailStatus: 'verified',
                 verificationToken: ''
-            });
+            };
 
-            // Return success response after verification
+            // Update main email if pending email exists
+            if (user.pendingEmail) {
+                updates.email = user.pendingEmail;
+                updates.pendingEmail = '';
+            }
+
+            // Save updates to database
+            await User.updateOne({ id: user.id }).set(updates);
+
+            // Return success response
             return exits.success({
                 message: 'Email verified successfully! You can now log in.'
             });
@@ -74,5 +100,4 @@ module.exports = {
             return exits.serverError(err);
         }
     }
-
 };

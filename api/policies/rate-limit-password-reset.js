@@ -1,3 +1,17 @@
+/**
+ * Rate Limiting Policy for Password Reset
+ *
+ * Purpose:
+ * Prevents abuse of the password reset functionality by limiting the number of
+ * password reset requests per IP address within a specified time window.
+ *
+ * Flow:
+ * 1. Track password reset attempts per IP address
+ * 2. Check if the IP has exceeded the allowed limit
+ * 3. If limit exceeded, return 429 Too Many Requests
+ * 4. If within limit, allow request to proceed
+ */
+
 let attempts = {};
 
 module.exports = async function (req, res, proceed) {
