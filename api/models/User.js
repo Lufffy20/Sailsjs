@@ -60,6 +60,12 @@ module.exports = {
       description: 'User email address'
     },
 
+    stripeCustomerId: {
+      type: 'string',
+      columnName: 'stripe_customer_id',
+      description: 'Stripe Customer ID'
+    },
+
     verificationToken: {
       type: 'string',
       columnName: 'verification_token',

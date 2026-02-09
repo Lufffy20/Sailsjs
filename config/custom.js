@@ -30,6 +30,9 @@ module.exports.custom = {
       pass: '2bc8945bfef978'
     },
     from: 'no-reply@example.com'
-  }
+  },
+
+  stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY,
 
 };

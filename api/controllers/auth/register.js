@@ -104,6 +104,12 @@ module.exports = {
       const { v4: uuidv4 } = require('uuid');
       const verificationToken = uuidv4();
 
+      // Create Stripe customer
+      const stripeCustomer = await sails.helpers.createStripeCustomer.with({
+        email: inputs.email,
+        name: `${inputs.firstName} ${inputs.lastName}`
+      });
+
       // Create new user with unverified email status
       await User.create({
         firstName: inputs.firstName,
@@ -112,7 +118,8 @@ module.exports = {
         email: inputs.email,
         password: inputs.password,
         verificationToken,
-        emailStatus: 'unverified'
+        emailStatus: 'unverified',
+        stripeCustomerId: stripeCustomer.id
       });
 
       // Generate email verification link

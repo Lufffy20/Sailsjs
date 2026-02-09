@@ -22,4 +22,8 @@ module.exports.routes = {
   'POST /auth/request-password-reset': { action: 'auth/request-password-reset' },
   'POST /auth/reset-password': { action: 'auth/reset-password' },
 
+  'POST /items/add': { action: 'items/add-item' },
+  'GET /items': { action: 'items/get-items' },
+  'POST /payment/create-order': { action: 'payment/create-order' },
+
 };

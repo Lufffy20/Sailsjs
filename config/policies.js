@@ -42,4 +42,8 @@ module.exports.policies = {
   'profile/delete-avatar': ['isAuthenticated'],
   'profile/change-password': ['isAuthenticated'],
 
+  'payment/create-order': ['isAuthenticated', 'isAdmin'],
+  'items/add-item': ['isAuthenticated', 'isAdmin'],
+  'items/get-items': true, // Public access
+
 };

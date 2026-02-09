@@ -1,23 +1,7 @@
 /**
  * Verify Email Action
- *
- * Purpose:
- * Verifies a user's email address using a verification token.
- * - Validates verification token
- * - Marks email as verified
- * - Handles pending email update if present
- * - Clears verification token after successful verification
- *
- * Flow:
- * 1. Accept verification token
- * 2. Find user with matching token
- * 3. If token is invalid or expired, return error
- * 4. Update email verification status
- * 5. Update pending email if applicable
- * 6. Clear verification token
- * 7. Return success response
+ * Handles email verification using token
  */
-
 module.exports = {
 
     // Action name (used internally by Sails)
@@ -71,20 +55,11 @@ module.exports = {
                 });
             }
 
-            // Prepare fields to update
-            const updates = {
+            // Mark email as verified and clear verification token
+            await User.updateOne({ id: user.id }).set({
                 emailStatus: 'verified',
                 verificationToken: ''
-            };
-
-            // Update main email if pending email exists
-            if (user.pendingEmail) {
-                updates.email = user.pendingEmail;
-                updates.pendingEmail = '';
-            }
-
-            // Save updates to database
-            await User.updateOne({ id: user.id }).set(updates);
+            });
 
             // Return success response
             return exits.success({
