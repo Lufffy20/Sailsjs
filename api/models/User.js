@@ -1,14 +1,25 @@
 /**
  * User Model
- * Defines user schema and handles password hashing
+ *
+ * Purpose:
+ * Defines the user schema and handles password security.
+ * - Stores user profile and authentication-related data
+ * - Enforces uniqueness and validation rules
+ * - Hashes user password before saving to the database
+ *
+ * Notes:
+ * - Passwords are stored in hashed form using bcrypt
+ * - Email verification and password reset fields support account security flows
  */
 
 const bcrypt = require('bcrypt');
 
 module.exports = {
 
+  // Database table name
   tableName: 'user',
 
+  // Model attributes
   attributes: {
 
     firstName: {
@@ -52,7 +63,7 @@ module.exports = {
     verificationToken: {
       type: 'string',
       columnName: 'verification_token',
-      description: 'Token for email verification'
+      description: 'Token used for email verification'
     },
 
     emailStatus: {
@@ -60,31 +71,44 @@ module.exports = {
       isIn: ['unverified', 'verified'],
       defaultsTo: 'unverified',
       columnName: 'email_status',
-      description: 'Email verification status'
+      description: 'Current email verification status'
+    },
+
+    pendingEmail: {
+      type: 'string',
+      isEmail: true,
+      columnName: 'pending_email',
+      description: 'New email address waiting for verification'
     },
 
     lastTokenIssuedAt: {
       type: 'number',
       columnName: 'last_token_issued_at',
-      description: 'Timestamp when the last JWT was issued'
+      description: 'Timestamp of last issued JWT token'
     },
 
     passwordResetToken: {
       type: 'string',
-      description: 'A unique token used to verify the user identity for password recovery.'
+      description: 'Token used for password reset verification'
     },
 
     passwordResetTokenExpiresAt: {
       type: 'number',
-      description: 'A timestamp representing when the password reset token expires.'
+      description: 'Password reset token expiry timestamp'
     },
 
     role: {
       type: 'string',
       isIn: ['superadmin', 'admin', 'user'],
-      defaultsTo: 'user'
+      defaultsTo: 'user',
+      description: 'User role'
     },
 
+    profilePictureUrl: {
+      type: 'string',
+      columnName: 'profile_picture_url',
+      description: 'URL path to the user\'s profile picture'
+    },
 
     password: {
       type: 'string',
@@ -93,10 +117,9 @@ module.exports = {
       columnName: 'password',
       description: 'Hashed user password'
     }
-
   },
 
-  // Lifecycle callback
+  // Lifecycle callback to hash password before creating user
   beforeCreate: async function (values, proceed) {
     values.password = await bcrypt.hash(values.password, 10);
     return proceed();

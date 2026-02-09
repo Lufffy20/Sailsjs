@@ -13,6 +13,12 @@ module.exports.routes = {
   'PUT /user/users/:id': 'user/update',
   'DELETE /user/users/:id': 'user/delete',
 
+  'GET /user/profile': 'profile/get',
+  'PUT /user/profile': 'profile/update',
+  'POST /user/profile/avatar': 'profile/upload-avatar',
+  'DELETE /user/profile/avatar': 'profile/delete-avatar',
+  'PUT /user/profile/change-password': 'profile/change-password',
+
   'POST /auth/request-password-reset': { action: 'auth/request-password-reset' },
   'POST /auth/reset-password': { action: 'auth/reset-password' },
 

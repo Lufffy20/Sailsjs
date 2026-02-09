@@ -31,8 +31,15 @@ module.exports.policies = {
   // User Controller Policies
   'user/create': ['isAuthenticated', 'isAdmin'], // Admin only
   'user/get-all': ['isAuthenticated', 'isAdmin'], // Admin only
-  'user/get-one': 'isAuthenticated',
-  'user/update': 'isAuthenticated',
-  'user/delete': 'isAuthenticated',
+  'user/get-one': ['isAuthenticated', 'isAdmin'],
+  'user/update': ['isAuthenticated', 'isAdmin'],
+  'user/delete': ['isAuthenticated', 'isAdmin'],
+
+  // Profile Controller Policies
+  'profile/get': ['isAuthenticated'], // Logged in user only
+  'profile/update': ['isAuthenticated'],
+  'profile/upload-avatar': ['isAuthenticated'],
+  'profile/delete-avatar': ['isAuthenticated'],
+  'profile/change-password': ['isAuthenticated'],
 
 };
