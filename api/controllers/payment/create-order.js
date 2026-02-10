@@ -40,6 +40,11 @@ module.exports = {
             type: 'string',
             required: true,
             description: 'Stripe Payment Method ID (tok_... or pm_...)'
+        },
+        addressId: {
+            type: 'string',
+            required: true,
+            description: 'User Address ID to associate with this order'
         }
     },
 
@@ -65,10 +70,10 @@ module.exports = {
     fn: async function (inputs) {
 
         const userId = this.req.me.id;
-        const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+        const stripe = require('stripe')(sails.config.custom.stripeSecretKey || process.env.STRIPE_SECRET_KEY);
 
-        // Validations before transaction
-        // 1. Fetch active cart
+        // 1. Validations
+        // Fetch active cart
         const cart = await Cart.findOne({
             user: userId,
             status: 'active'
@@ -78,18 +83,22 @@ module.exports = {
             throw { notFound: 'No active cart found to checkout.' };
         }
 
+        // Validate Address
+        const userAddress = await UserAddress.findOne({ id: inputs.addressId });
+        if (!userAddress) {
+            throw { badRequest: 'Invalid address ID provided.' };
+        }
+        if (userAddress.user !== userId) {
+            throw { badRequest: 'Address does not belong to the user.' };
+        }
+
         // 2. Calculate total amount
         let amount = 0;
         cart.items.forEach(item => {
             amount += (item.price * item.quantity);
         });
 
-        // 3. Process Payment first (External API)
-        // We do this OUTSIDE the transaction because it's an external network call.
-        // If it fails, we don't start the transaction.
-        // If it succeeds, we start a transaction to record it.
-        // If transaction fails, we might have a paid Stripe intent but no order -> Requires reconciliation/webhook (out of scope for now but noted in review).
-
+        // 3. Create Stripe PaymentIntent (Unconfirmed)
         let paymentIntent;
         try {
             // Fetch user for Stripe customer
@@ -97,7 +106,6 @@ module.exports = {
 
             let customerId = user.stripeCustomerId;
             if (!customerId) {
-                // Determine if we need to create one lazily
                 const customer = await stripe.customers.create({
                     email: user.email,
                     name: `${user.firstName} ${user.lastName}`
@@ -109,13 +117,13 @@ module.exports = {
                 });
             }
 
-            // Create and confirm payment intent
+            // Create PaymentIntent
             paymentIntent = await stripe.paymentIntents.create({
                 amount: Math.round(amount * 100),
                 currency: 'usd',
                 customer: customerId,
                 payment_method: inputs.paymentMethodId,
-                confirm: true,
+                confirm: false, // Do not confirm yet
                 automatic_payment_methods: {
                     enabled: true,
                     allow_redirects: 'never'
@@ -123,34 +131,59 @@ module.exports = {
             });
 
         } catch (err) {
-            sails.log.error('Stripe Payment Exception:', err);
-            // Handle failure logic here?
-            // Since we haven't touched the DB yet regarding order, we can just fail.
-            // Stock was reserved at cart-add time. If we error here, cart remains active, stock remains reserved.
-            // This is safer than the previous logic which tried to roll back stock on payment failure.
-            // Cron will eventually expire the cart and restore stock if user drops off.
-            // Or user can try again.
+            sails.log.error('Stripe PaymentIntent Creation Failed:', err);
+            throw { paymentFailed: `Payment initialization failed: ${err.message}` };
+        }
+
+        // 4. Create "Pending" Order in Database
+        let order;
+        try {
+            order = await Order.create({
+                user: userId,
+                stripePaymentId: paymentIntent.id,
+                amount: amount,
+                currency: paymentIntent.currency,
+                shippingAddress: userAddress,
+                status: 'pending',
+                paymentStatus: 'pending'
+            }).fetch();
+        } catch (err) {
+            sails.log.error('Failed to create Pending Order:', err);
+            throw { serverError: 'Failed to initiate order. Please try again.' };
+        }
+
+        // 5. Confirm PaymentIntent (Charge the Card)
+        try {
+            paymentIntent = await stripe.paymentIntents.confirm(paymentIntent.id);
+        } catch (err) {
+            sails.log.error(`Payment Confirmation Failed for Order ${order.id}:`, err);
+
+            // Update Order to Failed
+            await Order.updateOne({ id: order.id }).set({
+                status: 'cancelled',
+                paymentStatus: 'failed'
+            });
 
             throw { paymentFailed: `Payment failed: ${err.message}` };
         }
 
         if (paymentIntent.status !== 'succeeded') {
+            await Order.updateOne({ id: order.id }).set({
+                status: 'cancelled',
+                paymentStatus: 'failed'
+            });
             throw { paymentFailed: `Payment status: ${paymentIntent.status}` };
         }
 
-        // 4. Database Transaction for Order Creation
+        // 6. Finalize Order (DB Transaction)
         try {
             await sails.getDatastore().transaction(async (db) => {
 
-                // Create Order
-                const order = await Order.create({
-                    user: userId,
-                    stripePaymentId: paymentIntent.id,
-                    amount: amount,
-                    currency: paymentIntent.currency,
+                // Update Order Status
+                await Order.updateOne({ id: order.id }).set({
                     status: 'processing',
                     paymentStatus: 'paid'
-                }).usingConnection(db).fetch();
+                }).usingConnection(db);
 
                 // Create Order Items
                 const orderItemsData = [];
@@ -181,15 +214,13 @@ module.exports = {
 
             return {
                 message: 'Order placed successfully',
-                paymentId: paymentIntent.id
+                paymentId: paymentIntent.id,
+                orderId: order.id
             };
 
         } catch (err) {
-            sails.log.error('Order Transaction Failed after Payment:', err);
-            // CRITICAL: Payment succeeded, but DB failed.
-            // Implementation of "Refund/Void" would go here.
-            // For now, alerting user.
-            throw { serverError: 'Order processing failed after payment. Please contact support.' };
+            sails.log.error(`CRITICAL: Order Finalization Failed for Order ${order.id} (Payment ${paymentIntent.id} succeeded):`, err);
+            throw { serverError: 'Payment succeeded but order finalization encountered an error. Our team has been notified.' };
         }
     }
 };

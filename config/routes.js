@@ -48,6 +48,14 @@ module.exports.routes = {
   'PUT /user/profile/change-password': 'profile/change-password',
 
   /**
+   * User Address Management
+   */
+  'POST /user/address': 'address/add',
+  'GET /user/addresses': 'address/list',
+  'PUT /user/address/:id': 'address/update',
+  'DELETE /user/address/:id': 'address/delete',
+
+  /**
    * Payment & Order Routes
    */
   'POST /payment/create-order': { action: 'payment/create-order' },

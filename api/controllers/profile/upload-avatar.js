@@ -20,118 +20,130 @@
 
 module.exports = {
 
-    // Action name (used internally by Sails)
-    friendlyName: 'Upload Avatar',
+  // Action name (used internally by Sails)
+  friendlyName: 'Upload Avatar',
 
-    // Short description of the action
-    description: 'Upload a new profile picture for the logged-in user',
+  // Short description of the action
+  description: 'Upload a new profile picture for the logged-in user',
 
-    // File fields accepted by this action
-    files: ['avatar'],
+  // File fields accepted by this action
+  files: ['avatar'],
 
-    // Expected input parameters
-    inputs: {
-        avatar: {
-            type: 'ref',
-            description: 'Uploaded avatar image file'
-        }
+  // Expected input parameters
+  inputs: {
+    avatar: {
+      type: 'ref',
+      description: 'Uploaded avatar image file'
+    }
+  },
+
+  // Possible exit responses
+  exits: {
+    success: {
+      description: 'Avatar uploaded successfully'
     },
-
-    // Possible exit responses
-    exits: {
-        success: {
-            description: 'Avatar uploaded successfully'
-        },
-        badRequest: {
-            responseType: 'badRequest'
-        },
-        serverError: {
-            responseType: 'serverError'
-        }
+    badRequest: {
+      responseType: 'badRequest'
     },
+    serverError: {
+      responseType: 'serverError'
+    }
+  },
 
-    // Main logic
-    fn: async function (inputs, exits) {
+  // Main logic
+  fn: async function (inputs, exits) {
 
-        const fs = require('fs');
-        const path = require('path');
-        const user = this.req.me;
+    const fs = require('fs');
+    const path = require('path');
+    const user = this.req.me;
 
-        // Upload configuration
-        const uploadOptions = {
-            maxBytes: 2 * 1024 * 1024,
-            dirname: path.resolve(sails.config.appPath, 'assets/images/avatars')
-        };
+    const uploadPath = path.resolve(sails.config.appPath, 'assets/images/avatars');
 
-        // Handle file upload
-        this.req.file('avatar').upload(uploadOptions, async (err, uploadedFiles) => {
+    // Ensure directory exists
+    if (!fs.existsSync(uploadPath)) {
+      try {
+        fs.mkdirSync(uploadPath, { recursive: true });
+      } catch (err) {
+        sails.log.error('Failed to create avatar directory:', err);
+        return exits.serverError(err);
+      }
+    }
 
-            // Handle upload errors
-            if (err) {
-                if (err.code === 'E_EXCEEDS_UPLOAD_LIMIT') {
-                    return exits.badRequest({
-                        message: 'File too large. Maximum size is 2MB.'
-                    });
-                }
-                return exits.serverError(err);
-            }
+    // Upload configuration
+    const uploadOptions = {
+      maxBytes: 2 * 1024 * 1024,
+      dirname: uploadPath
+    };
 
-            // No file uploaded
-            if (!uploadedFiles || uploadedFiles.length === 0) {
-                return exits.badRequest({
-                    message: 'No file was uploaded'
-                });
-            }
+    // Handle file upload
+    this.req.file('avatar').upload(uploadOptions, async (err, uploadedFiles) => {
 
-            const uploadedFile = uploadedFiles[0];
-            const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+      // Handle upload errors
+      if (err) {
+        if (err.code === 'E_EXCEEDS_UPLOAD_LIMIT') {
+          return exits.badRequest({
+            message: 'File too large. Maximum size is 2MB.'
+          });
+        }
+        return exits.serverError(err);
+      }
 
-            // Validate file type
-            if (!validTypes.includes(uploadedFile.type)) {
-                fs.unlink(uploadedFile.fd, () => { });
-                return exits.badRequest({
-                    message: 'Invalid file type. Only image files are allowed.'
-                });
-            }
+      // No file uploaded
+      if (!uploadedFiles || uploadedFiles.length === 0) {
+        return exits.badRequest({
+          message: 'No file was uploaded'
+        });
+      }
 
-            // Delete old avatar files if they exist
-            if (user.profilePictureUrl && user.profilePictureUrl.startsWith('/images/avatars/')) {
+      const uploadedFile = uploadedFiles[0];
+      const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
-                const oldFilename = path.basename(user.profilePictureUrl);
+      // Validate file type
+      if (!validTypes.includes(uploadedFile.type)) {
+        fs.unlink(uploadedFile.fd, () => { });
+        return exits.badRequest({
+          message: 'Invalid file type. Only image files are allowed.'
+        });
+      }
 
-                const assetPath = path.resolve(
+      // Delete old avatar files if they exist
+      if (user.profilePictureUrl && user.profilePictureUrl.startsWith('/images/avatars/')) {
+
+        const oldFilename = path.basename(user.profilePictureUrl);
+
+        const assetPath = path.resolve(
                     sails.config.appPath,
                     'assets/images/avatars',
                     oldFilename
-                );
+        );
 
-                const tmpPath = path.resolve(
+        const tmpPath = path.resolve(
                     sails.config.appPath,
                     '.tmp/public/images/avatars',
                     oldFilename
-                );
+        );
 
-                [assetPath, tmpPath].forEach(p => {
-                    if (fs.existsSync(p)) {
-                        fs.unlink(p, () => { });
-                    }
-                });
-            }
-
-            // Build public avatar URL
-            const filename = path.basename(uploadedFile.fd);
-            const publicUrl = `/images/avatars/${filename}`;
-
-            // Update user profile with new avatar URL
-            await User.updateOne({ id: user.id }).set({
-                profilePictureUrl: publicUrl
-            });
-
-            // Return success response
-            return exits.success({
-                message: 'Avatar uploaded successfully',
-                avatarUrl: publicUrl
-            });
+        [assetPath, tmpPath].forEach(p => {
+          if (fs.existsSync(p)) {
+            fs.unlink(p, () => { });
+          }
         });
-    }
+      }
+
+      // Build public avatar URL
+      const filename = path.basename(uploadedFile.fd);
+      const publicUrl = `/images/avatars/${filename}`;
+
+      // Update user profile with new avatar URL
+      await User.updateOne({ id: user.id }).set({
+        profilePictureUrl: publicUrl
+      });
+
+      // Return success response
+      return exits.success({
+        message: 'Avatar uploaded successfully',
+        avatarUrl: publicUrl
+      });
+    });
+  }
 };

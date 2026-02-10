@@ -54,6 +54,12 @@ module.exports.policies = {
   'cart/remove': ['isAuthenticated'],
   'cart/checkout-prep': ['isAuthenticated'],
 
+  // Address Controller Policies
+  'address/add': ['isAuthenticated'],
+  'address/update': ['isAuthenticated'],
+  'address/delete': ['isAuthenticated'],
+  'address/list': ['isAuthenticated'],
+
   // Product Controller Policies
   'product/create': ['isAuthenticated', 'isAdmin'],
   'product/add-variant': ['isAuthenticated', 'isAdmin'],
