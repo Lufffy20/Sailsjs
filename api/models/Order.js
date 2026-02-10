@@ -15,10 +15,9 @@ module.exports = {
             description: 'The user who placed the order'
         },
 
-        item: {
-            type: 'json',
-            required: true,
-            description: 'Details of the purchased item (snapshot)'
+        items: {
+            collection: 'OrderItem',
+            via: 'order'
         },
 
         stripePaymentId: {
@@ -30,20 +29,33 @@ module.exports = {
         amount: {
             type: 'number',
             required: true,
-            description: 'Amount paid'
+            description: 'Total amount paid'
         },
 
         currency: {
             type: 'string',
-            required: true,
+            defaultsTo: 'usd',
             description: 'Currency of the payment'
+        },
+
+        // Address details (can be expanded)
+        shippingAddress: {
+            type: 'json',
+            description: 'Snapshot of shipping address'
         },
 
         status: {
             type: 'string',
-            isIn: ['pending', 'succeeded', 'failed'],
+            isIn: ['pending', 'processing', 'shipped', 'delivered', 'cancelled'],
             defaultsTo: 'pending',
-            description: 'Status of the order'
+            description: 'Order fulfillment status'
+        },
+
+        paymentStatus: {
+            type: 'string',
+            isIn: ['pending', 'paid', 'failed'],
+            defaultsTo: 'pending',
+            description: 'Payment status'
         }
 
     },
