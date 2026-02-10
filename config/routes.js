@@ -48,10 +48,8 @@ module.exports.routes = {
   'PUT /user/profile/change-password': 'profile/change-password',
 
   /**
-   * Item & Payment Routes (Legacy / Generic)
+   * Payment & Order Routes
    */
-  'POST /items/add': { action: 'items/add-item' },
-  'GET /items': { action: 'items/get-items' },
   'POST /payment/create-order': { action: 'payment/create-order' },
   'GET /order/history': { action: 'order/get-history' },
 
@@ -62,6 +60,11 @@ module.exports.routes = {
   'POST /admin/product/add-variant': { action: 'product/add-variant' },
   'GET /products': { action: 'product/get-all' },
   'GET /product/:id': { action: 'product/get-one' },
+
+  /**
+   * Webhooks
+   */
+  'POST /stripe/webhook': { action: 'stripe/webhook' },
 
   /**
    * Cart Management

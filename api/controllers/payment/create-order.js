@@ -67,6 +67,7 @@ module.exports = {
         const userId = this.req.me.id;
         const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
+        // Validations before transaction
         // 1. Fetch active cart
         const cart = await Cart.findOne({
             user: userId,
@@ -77,77 +78,26 @@ module.exports = {
             throw { notFound: 'No active cart found to checkout.' };
         }
 
-        // 2. Calculate total amount from cart items
+        // 2. Calculate total amount
         let amount = 0;
         cart.items.forEach(item => {
             amount += (item.price * item.quantity);
         });
 
-        /**
-         * Helper: Handle payment failure
-         * - Creates failed order
-         * - Stores order item snapshot
-         * - Marks cart as failed
-         * - Restores reserved stock
-         */
-        const handleFailure = async (errMessage, paymentIntentId = null, paymentCurrency = 'usd') => {
+        // 3. Process Payment first (External API)
+        // We do this OUTSIDE the transaction because it's an external network call.
+        // If it fails, we don't start the transaction.
+        // If it succeeds, we start a transaction to record it.
+        // If transaction fails, we might have a paid Stripe intent but no order -> Requires reconciliation/webhook (out of scope for now but noted in review).
 
-            // Create failed order
-            const failedOrder = await Order.create({
-                user: userId,
-                stripePaymentId: paymentIntentId || 'failed_attempt',
-                amount: amount,
-                currency: paymentCurrency,
-                status: 'cancelled',
-                paymentStatus: 'failed'
-            }).fetch();
-
-            // Create order items snapshot
-            const orderItemsData = [];
-            for (const item of cart.items) {
-                const variant = await ProductVariant
-                    .findOne({ id: item.productVariant })
-                    .populate('product');
-
-                orderItemsData.push({
-                    order: failedOrder.id,
-                    productVariant: item.productVariant,
-                    quantity: item.quantity,
-                    price: item.price,
-                    productName: variant ? variant.product.name : 'Unknown Product',
-                    variantSku: variant ? variant.sku : 'Unknown SKU'
-                });
-            }
-
-            await OrderItem.createEach(orderItemsData);
-
-            // Mark cart as failed
-            await Cart.updateOne({ id: cart.id }).set({
-                status: 'failed'
-            });
-
-            // Restore reserved stock
-            for (const item of cart.items) {
-                const variant = await ProductVariant.findOne({ id: item.productVariant });
-                if (variant) {
-                    await ProductVariant.updateOne({ id: item.productVariant }).set({
-                        quantity: variant.quantity + item.quantity
-                    });
-                }
-            }
-
-            throw { paymentFailed: `Payment failed: ${errMessage}` };
-        };
-
-        // 3. Process payment via Stripe
         let paymentIntent;
         try {
-
             // Fetch user for Stripe customer
             const user = await User.findOne({ id: userId });
 
             let customerId = user.stripeCustomerId;
             if (!customerId) {
+                // Determine if we need to create one lazily
                 const customer = await stripe.customers.create({
                     email: user.email,
                     name: `${user.firstName} ${user.lastName}`
@@ -174,65 +124,72 @@ module.exports = {
 
         } catch (err) {
             sails.log.error('Stripe Payment Exception:', err);
+            // Handle failure logic here?
+            // Since we haven't touched the DB yet regarding order, we can just fail.
+            // Stock was reserved at cart-add time. If we error here, cart remains active, stock remains reserved.
+            // This is safer than the previous logic which tried to roll back stock on payment failure.
+            // Cron will eventually expire the cart and restore stock if user drops off.
+            // Or user can try again.
 
-            const piId =
-                err.raw && err.raw.payment_intent
-                    ? err.raw.payment_intent.id
-                    : null;
-
-            await handleFailure(err.message, piId);
+            throw { paymentFailed: `Payment failed: ${err.message}` };
         }
 
-        // Verify payment status
         if (paymentIntent.status !== 'succeeded') {
-            await handleFailure(
-                `Payment status: ${paymentIntent.status}`,
-                paymentIntent.id,
-                paymentIntent.currency
-            );
+            throw { paymentFailed: `Payment status: ${paymentIntent.status}` };
         }
 
-        // 4. Create successful order
-        const order = await Order.create({
-            user: userId,
-            stripePaymentId: paymentIntent.id,
-            amount: amount,
-            currency: paymentIntent.currency,
-            status: 'processing',
-            paymentStatus: 'paid'
-        }).fetch();
+        // 4. Database Transaction for Order Creation
+        try {
+            await sails.getDatastore().transaction(async (db) => {
 
-        // 5. Create order items
-        const orderItemsData = [];
-        for (const item of cart.items) {
-            const variant = await ProductVariant
-                .findOne({ id: item.productVariant })
-                .populate('product');
+                // Create Order
+                const order = await Order.create({
+                    user: userId,
+                    stripePaymentId: paymentIntent.id,
+                    amount: amount,
+                    currency: paymentIntent.currency,
+                    status: 'processing',
+                    paymentStatus: 'paid'
+                }).usingConnection(db).fetch();
 
-            orderItemsData.push({
-                order: order.id,
-                productVariant: item.productVariant,
-                quantity: item.quantity,
-                price: item.price,
-                productName: variant ? variant.product.name : 'Unknown Product',
-                variantSku: variant ? variant.sku : 'Unknown SKU'
+                // Create Order Items
+                const orderItemsData = [];
+                for (const item of cart.items) {
+                    const variant = await ProductVariant
+                        .findOne({ id: item.productVariant })
+                        .usingConnection(db)
+                        .populate('product');
+
+                    orderItemsData.push({
+                        order: order.id,
+                        productVariant: item.productVariant,
+                        quantity: item.quantity,
+                        price: item.price,
+                        productName: variant ? variant.product.name : 'Unknown Product',
+                        variantSku: variant ? variant.sku : 'Unknown SKU'
+                    });
+                }
+
+                await OrderItem.createEach(orderItemsData).usingConnection(db);
+
+                // Mark Cart as Completed
+                await Cart.updateOne({ id: cart.id }).set({
+                    status: 'completed'
+                }).usingConnection(db);
+
             });
+
+            return {
+                message: 'Order placed successfully',
+                paymentId: paymentIntent.id
+            };
+
+        } catch (err) {
+            sails.log.error('Order Transaction Failed after Payment:', err);
+            // CRITICAL: Payment succeeded, but DB failed.
+            // Implementation of "Refund/Void" would go here.
+            // For now, alerting user.
+            throw { serverError: 'Order processing failed after payment. Please contact support.' };
         }
-
-        await OrderItem.createEach(orderItemsData);
-
-        // 6. Mark cart as completed
-        await Cart.updateOne({ id: cart.id }).set({
-            status: 'completed'
-        });
-
-        // Inventory was already deducted at add-to-cart time.
-        // Marking cart as completed prevents stock restoration by cron.
-
-        return {
-            message: 'Order placed successfully',
-            orderId: order.id,
-            paymentId: paymentIntent.id
-        };
     }
 };

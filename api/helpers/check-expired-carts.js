@@ -29,41 +29,44 @@ module.exports = {
 
         for (const cart of expiredCarts) {
             try {
-                // 2. LOCK: Attempt to set status to 'processing' atomicly
-                // This ensures only one process (this cron run) handles this cart.
-                // If cart/remove api changed it or another cron instance ran, this update will fail/return 0.
-                const updatedCart = await Cart.updateOne({
-                    id: cart.id,
-                    status: 'active'
-                }).set({
-                    status: 'processing'
-                });
+                // Transactional Block
+                await sails.getDatastore().transaction(async (db) => {
 
-                if (!updatedCart) {
-                    sails.log.verbose(`[CRON] Cart ${cart.id} was already modified. Skipping.`);
-                    continue;
-                }
+                    // 2. LOCK: Attempt to set status to 'processing' atomicly
+                    // This ensures only one process (this cron run) handles this cart.
+                    const updatedCart = await Cart.updateOne({
+                        id: cart.id,
+                        status: 'active'
+                    }).set({
+                        status: 'processing'
+                    }).usingConnection(db);
 
-                sails.log.verbose(`[CRON] Locked cart ${cart.id} for processing.`);
-
-                // 3. Re-fetch Items (Fresh from DB)
-                // We fetch items explicitly to ensure we don't accidentally restore deleted items.
-                const itemsToProcess = await CartItem.find({ cart: cart.id });
-
-                // 4. Restore Stock
-                for (const item of itemsToProcess) {
-                    const variant = await ProductVariant.findOne({ id: item.productVariant });
-                    if (variant) {
-                        await ProductVariant.updateOne({ id: variant.id }).set({
-                            quantity: variant.quantity + item.quantity
-                        });
-                        sails.log.verbose(`[CRON] Restored ${item.quantity} stock for variant SKU: ${variant.sku}`);
+                    if (!updatedCart) {
+                        // Already modified by someone else
+                        return; // Exit transaction early (implicit rollback/commit of nothing)
                     }
-                }
 
-                // 5. Mark Cart as Expired
-                await Cart.updateOne({ id: cart.id }).set({
-                    status: 'expired'
+                    sails.log.verbose(`[CRON] Locked cart ${cart.id} for processing.`);
+
+                    // 3. Re-fetch Items (Fresh from DB)
+                    const itemsToProcess = await CartItem.find({ cart: cart.id }).usingConnection(db);
+
+                    // 4. Restore Stock
+                    for (const item of itemsToProcess) {
+                        const variant = await ProductVariant.findOne({ id: item.productVariant }).usingConnection(db);
+                        if (variant) {
+                            await ProductVariant.updateOne({ id: variant.id }).set({
+                                quantity: variant.quantity + item.quantity
+                            }).usingConnection(db);
+                            sails.log.verbose(`[CRON] Restored ${item.quantity} stock for variant SKU: ${variant.sku}`);
+                        }
+                    }
+
+                    // 5. Mark Cart as Expired
+                    await Cart.updateOne({ id: cart.id }).set({
+                        status: 'expired'
+                    }).usingConnection(db);
+
                 });
 
                 sails.log.info(`[CRON] Cart ${cart.id} processed and marked as expired.`);
@@ -78,6 +81,6 @@ module.exports = {
                 } catch (e) { }
             }
         }
-    }
 
+    }
 };

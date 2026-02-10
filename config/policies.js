@@ -22,7 +22,9 @@ module.exports.policies = {
   // Auth is public
   'auth/*': true,
 
-  // Rate limit only reset request
+  // Rate limit sensitive auth actions
+  'auth/register': ['rate-limit-generic'],
+  'auth/login': ['rate-limit-generic'],
   'auth/request-password-reset': ['rate-limit-password-reset'],
 
   // Reset password remains public (token-based)
@@ -42,10 +44,9 @@ module.exports.policies = {
   'profile/delete-avatar': ['isAuthenticated'],
   'profile/change-password': ['isAuthenticated'],
 
+  // Payment & Order Policies
   'payment/create-order': ['isAuthenticated'], // User must be logged in to pay
   'order/get-history': ['isAuthenticated'],
-  'items/add-item': ['isAuthenticated', 'isAdmin'],
-  'items/get-items': true, // Public access
 
   // Cart Controller Policies
   'cart/add': ['isAuthenticated'],
@@ -58,5 +59,8 @@ module.exports.policies = {
   'product/add-variant': ['isAuthenticated', 'isAdmin'],
   'product/get-all': true, // Public
   'product/get-one': true, // Public
+
+  // Stripe Webhook (Signature verification handles auth)
+  'stripe/webhook': true,
 
 };
