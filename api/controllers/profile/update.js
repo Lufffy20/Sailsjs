@@ -30,6 +30,8 @@ module.exports = {
     inputs: {
         firstName: { type: 'string' },
         lastName: { type: 'string' },
+        first_name: { type: 'string' }, // Support snake_case
+        last_name: { type: 'string' },  // Support snake_case
         username: { type: 'string' },
         email: { type: 'string', isEmail: true }
     },
@@ -57,9 +59,12 @@ module.exports = {
             const updates = {};
             let emailVerificationSent = false;
 
-            // Update first name and last name if provided
-            if (inputs.firstName) updates.firstName = inputs.firstName;
-            if (inputs.lastName) updates.lastName = inputs.lastName;
+            // Update first name and last name if provided (support both camelCase and snake_case)
+            const newFirstName = inputs.firstName || inputs.first_name;
+            const newLastName = inputs.lastName || inputs.last_name;
+
+            if (newFirstName) updates.firstName = newFirstName;
+            if (newLastName) updates.lastName = newLastName;
 
             // Handle username change
             if (inputs.username && inputs.username !== user.username) {
@@ -99,6 +104,23 @@ module.exports = {
                 });
 
                 emailVerificationSent = true;
+            }
+
+            // Sync Name with Stripe (Best Effort)
+            if (user.stripeCustomerId && (updates.firstName || updates.lastName)) {
+                try {
+                    const stripe = require('stripe')(sails.config.custom.stripeSecretKey);
+                    const newFirstName = updates.firstName || user.firstName;
+                    const newLastName = updates.lastName || user.lastName;
+
+                    await stripe.customers.update(user.stripeCustomerId, {
+                        name: `${newFirstName} ${newLastName}`
+                    });
+                    sails.log.verbose(`[Stripe Sync] Updated customer name for ${user.email}`);
+                } catch (stripeErr) {
+                    sails.log.error('Failed to sync name with Stripe:', stripeErr);
+                    // Do not block profile update
+                }
             }
 
             // Update user record if there are changes

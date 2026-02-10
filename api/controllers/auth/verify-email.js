@@ -55,11 +55,38 @@ module.exports = {
                 });
             }
 
-            // Mark email as verified and clear verification token
-            await User.updateOne({ id: user.id }).set({
+            // Determine the new email status and address
+            const updates = {
                 emailStatus: 'verified',
-                verificationToken: ''
-            });
+                verificationToken: '',
+                pendingEmail: '' // Clear pending email
+            };
+
+            // If this was a profile update (pendingEmail exists), promote it to main email
+            if (user.pendingEmail) {
+                updates.email = user.pendingEmail;
+            }
+
+            // Mark email as verified and update User record
+            await User.updateOne({ id: user.id }).set(updates);
+
+            // Sync Email with Stripe (Best Effort)
+            // We do this AFTER updating the DB to ensure we only sync verified emails
+            if (user.stripeCustomerId) {
+                try {
+                    const stripe = require('stripe')(sails.config.custom.stripeSecretKey);
+                    // Use the new email (either just verified pendingEmail or existing email)
+                    const validEmail = updates.email || user.email;
+
+                    await stripe.customers.update(user.stripeCustomerId, {
+                        email: validEmail
+                    });
+                    sails.log.verbose(`[Stripe Sync] Updated customer email for user ${user.id}`);
+                } catch (stripeErr) {
+                    sails.log.error('Failed to sync email with Stripe:', stripeErr);
+                    // Do not fail the request, as email is already verified locally
+                }
+            }
 
             // Return success response
             return exits.success({
