@@ -9,22 +9,22 @@
  * https://sailsjs.com/config/bootstrap
  */
 
-module.exports.bootstrap = async function() {
+module.exports.bootstrap = async function () {
 
-  // By convention, this is a good place to set up fake data during development.
-  //
-  // For example:
-  // ```
-  // // Set up fake development data (or if we already have some, avast)
-  // if (await User.count() > 0) {
-  //   return;
-  // }
-  //
-  // await User.createEach([
-  //   { emailAddress: 'ry@example.com', fullName: 'Ryan Dahl', },
-  //   { emailAddress: 'rachael@example.com', fullName: 'Rachael Shaw', },
-  //   // etc.
-  // ]);
-  // ```
+  // Seed Admin User
+  if (await User.count({ email: 'admin@example.com' }) === 0) {
+    await User.create({
+      firstName: 'Admin',
+      lastName: 'User',
+      username: 'admin',
+      email: 'admin@example.com',
+      password: 'password123',
+      role: 'admin', // Ensure User model has this field and allows it
+      emailStatus: 'verified'
+    });
+    sails.log.info('Seeded admin user: admin@example.com / password123');
+  }
 
+
+  // Cron jobs are now handled by config/cron.js via sails-hook-cron
 };

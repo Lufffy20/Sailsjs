@@ -1,120 +1,238 @@
 /**
- * Create Order Controller
+ * Create Order Action
  *
- * @description :: Server-side actions for handling incoming requests.
- * @help        :: See https://sailsjs.com/docs/concepts/actions
+ * Purpose:
+ * Creates an order from the user's active cart and processes payment using Stripe.
+ * - Validates active cart and cart items
+ * - Calculates total payable amount
+ * - Processes payment via Stripe Payment Intent
+ * - Handles payment failure with proper rollback
+ * - Creates order and order items on successful payment
+ * - Updates cart status to completed
+ *
+ * Flow:
+ * 1. Fetch active cart for logged-in user
+ * 2. Calculate total amount from cart items
+ * 3. Process payment using Stripe
+ * 4. On payment failure:
+ *    - Create failed order record
+ *    - Create order items snapshot
+ *    - Mark cart as failed
+ *    - Restore reserved stock
+ * 5. On payment success:
+ *    - Create order
+ *    - Create order items
+ *    - Mark cart as completed
+ * 6. Return order and payment details
  */
-
-const stripe = require('stripe');
 
 module.exports = {
 
-    friendlyName: 'Create order',
+    // Action name (used internally by Sails)
+    friendlyName: 'Create Order',
 
-    description: 'Process payment and create an order.',
+    // Short description of the action
+    description: 'Create an order from the active cart and process payment via Stripe.',
 
+    // Expected input parameters
     inputs: {
-        itemId: {
-            type: 'number',
-            required: true,
-            description: 'The ID of the item to purchase.'
-        },
-        token: {
+        paymentMethodId: {
             type: 'string',
             required: true,
-            description: 'The Stripe Payment Method ID (pm_...) or Token (tok_...).'
+            description: 'Stripe Payment Method ID (tok_... or pm_...)'
         }
     },
 
+    // Possible exit responses
     exits: {
         success: {
-            description: 'Order created successfully.'
+            responseType: 'ok'
         },
         badRequest: {
-            responseType: 'badRequest',
-            description: 'Invalid request or payment failed.'
+            responseType: 'badRequest'
         },
-        serverError: {
-            responseType: 'serverError',
-            description: 'Something went wrong.'
+        paymentFailed: {
+            responseType: 'badRequest',
+            description: 'Payment processing failed'
+        },
+        notFound: {
+            responseType: 'notFound',
+            description: 'Active cart not found'
         }
     },
 
-    fn: async function (inputs, exits) {
+    // Main logic
+    fn: async function (inputs) {
 
-        try {
-            // Initialize Stripe
-            const stripeClient = stripe(sails.config.custom.stripeSecretKey);
+        const userId = this.req.me.id;
+        const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
-            // Get authenticated user (assuming policies attach user to req.me or req.user)
-            const user = this.req.me || this.req.user;
+        // 1. Fetch active cart
+        const cart = await Cart.findOne({
+            user: userId,
+            status: 'active'
+        }).populate('items');
 
-            if (!user) {
-                return exits.badRequest({ message: 'User not authenticated.' });
-            }
+        if (!cart || cart.items.length === 0) {
+            throw { notFound: 'No active cart found to checkout.' };
+        }
 
-            // Check if user has a Stripe Customer ID
-            if (!user.stripeCustomerId) {
-                // Attempt to create one if missing
-                const customer = await stripeClient.customers.create({
-                    email: user.email,
-                    name: `${user.firstName} ${user.lastName}`,
-                    metadata: { userId: user.id }
+        // 2. Calculate total amount from cart items
+        let amount = 0;
+        cart.items.forEach(item => {
+            amount += (item.price * item.quantity);
+        });
+
+        /**
+         * Helper: Handle payment failure
+         * - Creates failed order
+         * - Stores order item snapshot
+         * - Marks cart as failed
+         * - Restores reserved stock
+         */
+        const handleFailure = async (errMessage, paymentIntentId = null, paymentCurrency = 'usd') => {
+
+            // Create failed order
+            const failedOrder = await Order.create({
+                user: userId,
+                stripePaymentId: paymentIntentId || 'failed_attempt',
+                amount: amount,
+                currency: paymentCurrency,
+                status: 'cancelled',
+                paymentStatus: 'failed'
+            }).fetch();
+
+            // Create order items snapshot
+            const orderItemsData = [];
+            for (const item of cart.items) {
+                const variant = await ProductVariant
+                    .findOne({ id: item.productVariant })
+                    .populate('product');
+
+                orderItemsData.push({
+                    order: failedOrder.id,
+                    productVariant: item.productVariant,
+                    quantity: item.quantity,
+                    price: item.price,
+                    productName: variant ? variant.product.name : 'Unknown Product',
+                    variantSku: variant ? variant.sku : 'Unknown SKU'
                 });
-
-                await User.updateOne({ id: user.id }).set({ stripeCustomerId: customer.id });
-                user.stripeCustomerId = customer.id;
             }
 
-            // Find the item
-            const item = await Item.findOne({ id: inputs.itemId });
-            if (!item) {
-                return exits.badRequest({ message: 'Item not found.' });
+            await OrderItem.createEach(orderItemsData);
+
+            // Mark cart as failed
+            await Cart.updateOne({ id: cart.id }).set({
+                status: 'failed'
+            });
+
+            // Restore reserved stock
+            for (const item of cart.items) {
+                const variant = await ProductVariant.findOne({ id: item.productVariant });
+                if (variant) {
+                    await ProductVariant.updateOne({ id: item.productVariant }).set({
+                        quantity: variant.quantity + item.quantity
+                    });
+                }
             }
 
-            // Create PaymentIntent and confirm immediately
-            const paymentIntent = await stripeClient.paymentIntents.create({
-                amount: Math.round(item.price * 100), // Convert to cents
-                currency: item.currency,
-                customer: user.stripeCustomerId,
-                payment_method: inputs.token,
+            throw { paymentFailed: `Payment failed: ${errMessage}` };
+        };
+
+        // 3. Process payment via Stripe
+        let paymentIntent;
+        try {
+
+            // Fetch user for Stripe customer
+            const user = await User.findOne({ id: userId });
+
+            let customerId = user.stripeCustomerId;
+            if (!customerId) {
+                const customer = await stripe.customers.create({
+                    email: user.email,
+                    name: `${user.firstName} ${user.lastName}`
+                });
+                customerId = customer.id;
+
+                await User.updateOne({ id: userId }).set({
+                    stripeCustomerId: customerId
+                });
+            }
+
+            // Create and confirm payment intent
+            paymentIntent = await stripe.paymentIntents.create({
+                amount: Math.round(amount * 100),
+                currency: 'usd',
+                customer: customerId,
+                payment_method: inputs.paymentMethodId,
                 confirm: true,
-                return_url: 'http://localhost:1337/payment/success', // Placeholder
                 automatic_payment_methods: {
                     enabled: true,
                     allow_redirects: 'never'
                 }
             });
 
-            // Check payment status
-            if (paymentIntent.status === 'succeeded') {
-                // Create Order
-                const newOrder = await Order.create({
-                    user: user.id,
-                    item: item,
-                    stripePaymentId: paymentIntent.id,
-                    amount: item.price,
-                    currency: item.currency,
-                    status: 'succeeded'
-                }).fetch();
-
-                return exits.success({
-                    message: 'Payment successful',
-                    order: newOrder
-                });
-
-            } else {
-                return exits.badRequest({
-                    message: `Payment failed or requires action. Status: ${paymentIntent.status}`,
-                    paymentIntentId: paymentIntent.id
-                });
-            }
-
         } catch (err) {
-            sails.log.error(err);
-            return exits.serverError(err);
+            sails.log.error('Stripe Payment Exception:', err);
+
+            const piId =
+                err.raw && err.raw.payment_intent
+                    ? err.raw.payment_intent.id
+                    : null;
+
+            await handleFailure(err.message, piId);
         }
 
-    }
+        // Verify payment status
+        if (paymentIntent.status !== 'succeeded') {
+            await handleFailure(
+                `Payment status: ${paymentIntent.status}`,
+                paymentIntent.id,
+                paymentIntent.currency
+            );
+        }
 
+        // 4. Create successful order
+        const order = await Order.create({
+            user: userId,
+            stripePaymentId: paymentIntent.id,
+            amount: amount,
+            currency: paymentIntent.currency,
+            status: 'processing',
+            paymentStatus: 'paid'
+        }).fetch();
+
+        // 5. Create order items
+        const orderItemsData = [];
+        for (const item of cart.items) {
+            const variant = await ProductVariant
+                .findOne({ id: item.productVariant })
+                .populate('product');
+
+            orderItemsData.push({
+                order: order.id,
+                productVariant: item.productVariant,
+                quantity: item.quantity,
+                price: item.price,
+                productName: variant ? variant.product.name : 'Unknown Product',
+                variantSku: variant ? variant.sku : 'Unknown SKU'
+            });
+        }
+
+        await OrderItem.createEach(orderItemsData);
+
+        // 6. Mark cart as completed
+        await Cart.updateOne({ id: cart.id }).set({
+            status: 'completed'
+        });
+
+        // Inventory was already deducted at add-to-cart time.
+        // Marking cart as completed prevents stock restoration by cron.
+
+        return {
+            message: 'Order placed successfully',
+            orderId: order.id,
+            paymentId: paymentIntent.id
+        };
+    }
 };

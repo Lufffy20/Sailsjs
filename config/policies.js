@@ -42,8 +42,21 @@ module.exports.policies = {
   'profile/delete-avatar': ['isAuthenticated'],
   'profile/change-password': ['isAuthenticated'],
 
-  'payment/create-order': ['isAuthenticated', 'isAdmin'],
+  'payment/create-order': ['isAuthenticated'], // User must be logged in to pay
+  'order/get-history': ['isAuthenticated'],
   'items/add-item': ['isAuthenticated', 'isAdmin'],
   'items/get-items': true, // Public access
+
+  // Cart Controller Policies
+  'cart/add': ['isAuthenticated'],
+  'cart/view': ['isAuthenticated'],
+  'cart/remove': ['isAuthenticated'],
+  'cart/checkout-prep': ['isAuthenticated'],
+
+  // Product Controller Policies
+  'product/create': ['isAuthenticated', 'isAdmin'],
+  'product/add-variant': ['isAuthenticated', 'isAdmin'],
+  'product/get-all': true, // Public
+  'product/get-one': true, // Public
 
 };
